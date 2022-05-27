@@ -13,7 +13,7 @@ from tqdm import tqdm
 import pickle
 import fire
 
-from deepface.basemodels import VGGFace, OpenFace, Facenet, Facenet512, FbDeepFace, DeepID, DlibWrapper, ArcFace, Boosting, SFaceWrapper
+# from deepface.basemodels import VGGFace, OpenFace, Facenet, Facenet512, FbDeepFace, DeepID, DlibWrapper, ArcFace, Boosting, SFaceWrapper
 from deepface.extendedmodels import Age, Gender, Race, Emotion
 from deepface.commons import functions, realtime, distance as dst
 
