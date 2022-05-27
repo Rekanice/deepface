@@ -11,8 +11,9 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 import pickle
+import fire
 
-from deepface.basemodels import VGGFace, OpenFace, Facenet, Facenet512, FbDeepFace, DeepID, DlibWrapper, ArcFace, SFace, Boosting
+from deepface.basemodels import VGGFace, OpenFace, Facenet, Facenet512, FbDeepFace, DeepID, DlibWrapper, ArcFace, Boosting, SFaceWrapper
 from deepface.extendedmodels import Age, Gender, Race, Emotion
 from deepface.commons import functions, realtime, distance as dst
 
@@ -21,6 +22,8 @@ tf_version = int(tf.__version__.split(".")[0])
 if tf_version == 2:
 	import logging
 	tf.get_logger().setLevel(logging.ERROR)
+
+from collections import OrderedDict
 
 def build_model(model_name):
 
@@ -46,7 +49,7 @@ def build_model(model_name):
 		'DeepID': DeepID.loadModel,
 		'Dlib': DlibWrapper.loadModel,
 		'ArcFace': ArcFace.loadModel,
-		'SFace': SFace.load_model,
+		'SFace': SFaceWrapper.load_model,
 		'Emotion': Emotion.loadModel,
 		'Age': Age.loadModel,
 		'Gender': Gender.loadModel,
@@ -265,7 +268,7 @@ def verify(img1_path, img2_path = '', model_name = 'VGG-Face', distance_metric =
 
 		return resp_obj
 
-def analyze(img_path, actions = ('emotion', 'age', 'gender', 'race') , models = None, enforce_detection = True, detector_backend = 'opencv', prog_bar = True):
+def analyze(img_path, img_bbox = None, actions = ('emotion', 'age', 'gender', 'race') , models = None, enforce_detection = True, detector_backend = 'opencv', prog_bar = True):
 
 	"""
 	This function analyzes facial attributes including age, gender, emotion and race
@@ -335,28 +338,10 @@ def analyze(img_path, actions = ('emotion', 'age', 'gender', 'race') , models = 
 		if 'emotion' in built_models and 'emotion' not in actions:
 			actions.append('emotion')
 
-		if 'age' in built_models and 'age' not in actions:
-			actions.append('age')
-
-		if 'gender' in built_models and 'gender' not in actions:
-			actions.append('gender')
-
-		if 'race' in built_models and 'race' not in actions:
-			actions.append('race')
-
 	#---------------------------------
 
 	if 'emotion' in actions and 'emotion' not in built_models:
 		models['emotion'] = build_model('Emotion')
-
-	if 'age' in actions and 'age' not in built_models:
-		models['age'] = build_model('Age')
-
-	if 'gender' in actions and 'gender' not in built_models:
-		models['gender'] = build_model('Gender')
-
-	if 'race' in actions and 'race' not in built_models:
-		models['race'] = build_model('Race')
 
 	#---------------------------------
 
@@ -373,7 +358,8 @@ def analyze(img_path, actions = ('emotion', 'age', 'gender', 'race') , models = 
 
 		disable_option = (False if len(actions) > 1 else True) or not prog_bar
 
-		pbar = tqdm(range(0, len(actions)), desc='Finding actions', disable = disable_option)
+		# pbar = tqdm(range(0, len(actions)), desc='Finding actions', disable = disable_option)
+		pbar = tqdm(range(0, len(actions)), disable = True)
 
 		img_224 = None # Set to prevent re-detection
 
@@ -385,7 +371,7 @@ def analyze(img_path, actions = ('emotion', 'age', 'gender', 'race') , models = 
 		#facial attribute analysis
 		for index in pbar:
 			action = actions[index]
-			pbar.set_description("Action: %s" % (action))
+			# pbar.set_description("Action: %s" % (action))
 
 			if action == 'emotion':
 				emotion_labels = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
@@ -395,61 +381,28 @@ def analyze(img_path, actions = ('emotion', 'age', 'gender', 'race') , models = 
 
 				sum_of_predictions = emotion_predictions.sum()
 
-				resp_obj["emotion"] = {}
+				resp_obj["emotions"] = {}
 
 				for i in range(0, len(emotion_labels)):
 					emotion_label = emotion_labels[i]
 					emotion_prediction = 100 * emotion_predictions[i] / sum_of_predictions
-					resp_obj["emotion"][emotion_label] = emotion_prediction
+					resp_obj["emotions"][emotion_label] = round(emotion_prediction, 2)
 
 				resp_obj["dominant_emotion"] = emotion_labels[np.argmax(emotion_predictions)]
 
-			elif action == 'age':
-				if img_224 is None:
-					img_224, region = functions.preprocess_face(img = img_path, target_size = (224, 224), grayscale = False, enforce_detection = enforce_detection, detector_backend = detector_backend, return_region = True)
-
-				age_predictions = models['age'].predict(img_224)[0,:]
-				apparent_age = Age.findApparentAge(age_predictions)
-
-				resp_obj["age"] = int(apparent_age) #int cast is for the exception - object of type 'float32' is not JSON serializable
-
-			elif action == 'gender':
-				if img_224 is None:
-					img_224, region = functions.preprocess_face(img = img_path, target_size = (224, 224), grayscale = False, enforce_detection = enforce_detection, detector_backend = detector_backend, return_region = True)
-
-				gender_prediction = models['gender'].predict(img_224)[0,:]
-
-				if np.argmax(gender_prediction) == 0:
-					gender = "Woman"
-				elif np.argmax(gender_prediction) == 1:
-					gender = "Man"
-
-				resp_obj["gender"] = gender
-
-			elif action == 'race':
-				if img_224 is None:
-					img_224, region = functions.preprocess_face(img = img_path, target_size = (224, 224), grayscale = False, enforce_detection = enforce_detection, detector_backend = detector_backend, return_region = True) #just emotion model expects grayscale images
-				race_predictions = models['race'].predict(img_224)[0,:]
-				race_labels = ['asian', 'indian', 'black', 'white', 'middle eastern', 'latino hispanic']
-
-				sum_of_predictions = race_predictions.sum()
-
-				resp_obj["race"] = {}
-				for i in range(0, len(race_labels)):
-					race_label = race_labels[i]
-					race_prediction = 100 * race_predictions[i] / sum_of_predictions
-					resp_obj["race"][race_label] = race_prediction
-
-				resp_obj["dominant_race"] = race_labels[np.argmax(race_predictions)]
 
 			#-----------------------------
-
+			
 			if is_region_set != True:
-				resp_obj["region"] = {}
-				is_region_set = True
-				for i, parameter in enumerate(region_labels):
-					resp_obj["region"][parameter] = int(region[i]) #int cast is for the exception - object of type 'float32' is not JSON serializable
+				if img_bbox is None:
+					resp_obj["box"] = OrderedDict()
+					is_region_set = True
+					for i, parameter in enumerate(region_labels):
+						resp_obj["box"][parameter] = int(region[i]) #int cast is for the exception - object of type 'float32' is not JSON serializable
+					resp_obj["box"] = list(resp_obj["box"].values())
 
+				else:
+					resp_obj["box"] = img_bbox
 		#---------------------------------
 
 		if bulkProcess == True:
@@ -825,5 +778,4 @@ def detectFace(img_path, target_size = (224, 224), detector_backend = 'opencv', 
 functions.initialize_folder()
 
 def cli():
-	import fire
 	fire.Fire()
